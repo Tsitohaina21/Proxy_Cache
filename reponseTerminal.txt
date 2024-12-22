@@ -1,0 +1,16 @@
+PS C:\Users\Tsitohaina\Documents\L2\ProgSys\proxycacheTsito> java ProxyCache
+Configuration chargée avec succès :
+PROXY_PORT = 1234
+SERVER_IP = null
+XAMPP_PORT = 80
+CACHE_DURATION = 60000
+Proxy Cache démarré sur le port 1234
+$CommandeProxy > 
+Requête reçue : GET /prepexam2/ HTTP/1.1
+Récupération depuis le serveur pour: prepexam2/
+Requête envoyée au serveur : GET /prepexam2/
+$CommandeProxy > 
+Requête reçue : GET /prepexam2/cherry.avif HTTP/1.1
+Récupération depuis le serveur pour: prepexam2/cherry.avif
+Requête envoyée au serveur : GET /prepexam2/cherry.avif
+$CommandeProxy >
