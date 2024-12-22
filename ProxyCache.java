@@ -16,6 +16,19 @@ public class ProxyCache {
         loadConfig("donnees.txt");
 
         System.out.println("Proxy Cache démarré sur le port " + PROXY_PORT);
+
+        // Lancer le thread de nettoyage automatique
+        new Thread(() -> {
+            while (running) {
+                cleanExpiredCache();
+                try {
+                    Thread.sleep(1000); // Vérifie toutes les secondes
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }).start();
+
         try (ServerSocket serverSocket = new ServerSocket(PROXY_PORT)) {
             new Thread(ProxyCache::handleServerCommands).start();
             while (true) {
@@ -56,30 +69,34 @@ public class ProxyCache {
             while (running) {
                 System.out.print("$CommandeProxy > ");
                 String command = scanner.nextLine().trim();
-    
+
                 if ("listecache".equalsIgnoreCase(command)) {
                     listCache();
-                } else if ("drop all".equalsIgnoreCase(command)) { 
+                } else if ("drop all".equalsIgnoreCase(command)) {
                     clearAllCache();
-                } else if (command.startsWith("drop ")) { 
+                } else if (command.startsWith("drop ")) {
                     String key = command.substring(5).trim();
                     deleteCacheEntry(key);
-                } else if (command.startsWith("changeduration ")) { 
+                } else if (command.startsWith("changeduration ")) {
                     String durationStr = command.substring(15).trim();
                     try {
                         CACHE_DURATION = Long.parseLong(durationStr);
-                        System.out.println("Durée de cache modifiée à " + CACHE_DURATION + " ms.");
+                        System.out.println("Durée de cache globale modifiée à " + CACHE_DURATION + " ms.");
                     } catch (NumberFormatException e) {
                         System.out.println("Erreur : Veuillez fournir une durée valide en millisecondes.");
                     }
-                } else if (command.startsWith("changedurationentry ")) { 
-                    String[] parts = command.split(" ");
-                    if (parts.length == 3) {
-                        String key = parts[1];
-                        long duration = Long.parseLong(parts[2]);
-                        changeDurationForEntry(key, duration);
+                } else if (command.startsWith("changedurationentry ")) {
+                    String[] parts = command.substring(20).trim().split(" ");
+                    if (parts.length == 2) {
+                        String key = parts[0];
+                        try {
+                            long duration = Long.parseLong(parts[1]);
+                            updateCacheDuration(key, duration);
+                        } catch (NumberFormatException e) {
+                            System.out.println("Erreur : Durée invalide pour l'entrée.");
+                        }
                     } else {
-                        System.out.println("Commande incorrecte. Utilisation : changedurationentry <clé> <durée>");
+                        System.out.println("Format : changedurationentry <clé> <durée>");
                     }
                 } else if ("exit".equalsIgnoreCase(command)) {
                     System.out.println("Arrêt du serveur proxy...");
@@ -91,18 +108,22 @@ public class ProxyCache {
             }
         }
     }
-    
-    private static void changeDurationForEntry(String key, long newDuration) {
-        CacheEntry entry = cache.get(key);
-        if (entry != null) {
-            entry.timestamp = System.currentTimeMillis(); // Réinitialise le timestamp
-            entry.timestamp += newDuration; // Met à jour la durée
-            System.out.println("Durée du cache mise à jour pour : " + key + " à " + newDuration + " ms.");
-        } else {
-            System.out.println("Aucune entrée trouvée avec la clé : " + key);
+
+    private static void cleanExpiredCache() {
+        long currentTime = System.currentTimeMillis();
+        Iterator<Map.Entry<String, CacheEntry>> iterator = cache.entrySet().iterator();
+
+        while (iterator.hasNext()) {
+            Map.Entry<String, CacheEntry> entry = iterator.next();
+            CacheEntry cacheEntry = entry.getValue();
+
+            if (currentTime - cacheEntry.timestamp > cacheEntry.duration) {
+                iterator.remove(); // Supprime l'entrée expirée
+                System.out.println("Cache expiré automatiquement supprimé : " + entry.getKey());
+            }
         }
     }
-    
+
     private static void clearAllCache() {
         if (cache.isEmpty()) {
             System.out.println("Le cache est déjà vide.");
@@ -111,7 +132,6 @@ public class ProxyCache {
             System.out.println("Tous les caches ont été effacés.");
         }
     }
-    
 
     private static void listCache() {
         if (cache.isEmpty()) {
@@ -126,6 +146,16 @@ public class ProxyCache {
         if (cache.containsKey(key)) {
             cache.remove(key);
             System.out.println("Entrée du cache supprimée : " + key);
+        } else {
+            System.out.println("Aucune entrée trouvée avec la clé : " + key);
+        }
+    }
+
+    private static void updateCacheDuration(String key, long duration) {
+        if (cache.containsKey(key)) {
+            CacheEntry entry = cache.get(key);
+            entry.duration = duration;
+            System.out.println("Durée du cache mise à jour pour : " + key + " à " + duration + " ms.");
         } else {
             System.out.println("Aucune entrée trouvée avec la clé : " + key);
         }
@@ -152,7 +182,7 @@ public class ProxyCache {
             if (cache.containsKey(fileRequested)) {
                 CacheEntry cachedEntry = cache.get(fileRequested);
                 // Vérifier si le cache n'est pas expiré
-                if (System.currentTimeMillis() - cachedEntry.timestamp <= CACHE_DURATION) {
+                if (System.currentTimeMillis() - cachedEntry.timestamp <= cachedEntry.duration) {
                     System.out.println("Fichier servi depuis le cache: " + fileRequested);
                     out.write(cachedEntry.data);
                     return;
@@ -166,7 +196,7 @@ public class ProxyCache {
             System.out.println("Récupération depuis le serveur pour: " + fileRequested);
             byte[] content = fetchFromServer(fileRequested);
             if (content != null) {
-                cache.put(fileRequested, new CacheEntry(content, System.currentTimeMillis())); // Mettre à jour le cache
+                cache.put(fileRequested, new CacheEntry(content, System.currentTimeMillis(), CACHE_DURATION)); // Mettre à jour le cache
                 out.write(content);
             } else {
                 sendError(out, "404 Not Found");
@@ -219,16 +249,16 @@ public class ProxyCache {
         }
     }
 
-
-
     // Classe interne pour gérer les entrées du cache
     private static class CacheEntry {
         byte[] data;
         long timestamp;
+        long duration; // Durée spécifique pour cette entrée
 
-        CacheEntry(byte[] data, long timestamp) {
+        CacheEntry(byte[] data, long timestamp, long duration) {
             this.data = data;
             this.timestamp = timestamp;
+            this.duration = duration;
         }
     }
 }
